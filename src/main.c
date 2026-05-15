@@ -1,518 +1,804 @@
 #include <avr/io.h>
 #include <util/delay.h>
 #include "uart.h"
+#include "Motor.h"
+#include "Car.h"
+#include "IR_Sensors.h"
+#include "Servo.h"
+#include <pins_arduino.h>
+#include <stdio.h>
 
-int left_ctrl = 2;//define the direction control pins of group B motor
-int left_pwm = 5;//define the PWM control pins of group B motor
-int right_ctrl = 4;//define the direction control pins of group A motor
-int right_pwm = 6;//define the PWM control pins of group A motor
-#define HIGH 0x1
-#define LOW 0x0
+// #include <Arduino.h>
+ 
 
-int speeds = 100;
+
+
+#define SCL_Pin PIN_A5  //Set the clock pin to A5
+#define SDA_Pin A4  //Set data pin to A4
+
+#define LEFT_MOTOR_DIR_PORT   PORTD
+#define LEFT_MOTOR_DIR_PIN    PD2
+
+#define RIGHT_MOTOR_DIR_PORT  PORTD
+#define RIGHT_MOTOR_DIR_PIN   PD3
+
+
+#define TXD   PD0
+#define RXD   PD1
+
+
+int THRESHOLD = 0;
+ 
+ 
+
+int distance, distance_l, distance_r;
+
+
+//For obstacle detection
+
+
+char BLE_val;
+
+
+
+int L_Initial_Value = 0;
+int R_Initial_Value = 0;
+int Initial_Difference = 0;
+
+
+int speed_R = 100;
+int speed_L = 100;
+
+
+
+//#############################################################
+int GradientRightEnd = 770;
+int GradientMiddle   = 650;
+int GradientLeftEnd  = 350;
+
+int GradientOutsideTrack = 500;
+
+//###############################################################
+
+int carIsInTrack = 1;
+int overtaking = 0;
+
+
+
+ 
+void digitalWrite(uint8_t pin, uint8_t value);
+void setup();
+// void analogWriteRight(uint8_t value);
+// void analogWriteLeft(uint8_t value);
+void analogWrite(int pin, uint8_t value);
+void tracking1();
+void printGradient();
+// void turnServo(int angle);
+void detectLane();
+void updateLaneOnObstacle(int obstacle_left ,int obstacle_front,int obstacle_right,int distance);
+void switchLanes(char NewLane);
+void keepOnTrack();
+void scanForObstacle( int distance_limit);
+void printNumber(char *str, int num); 
+void move(int leftSpeed, int rightSpeed);
+void MotorSpeed(int leftSpeed, int rightSpeed);
+void printNumberSameLine(char *str, int num);
+void KeepCarOnMyLane();
+void stopCar();
+void simpleGradientAlgorithm();
+void simpleObstacleAvoidance();
+void fastGradientAlgorithm();
+void simpleGradientAlgorithm2();
+// int get_distance();
+int getCurrentOrientation();
+void stopAfterLoops(int n);
+void move_globally();
+
+
+// static inline char uart_read_char(void) {
+//     return UDR0;
+// }
+
+// static inline uint8_t uart_available(void) {
+//     return (UCSR0A & (1 << RXC0)) != 0;
+// }
+
+void adc_init()
+{
+	ADMUX |= (1 << REFS0);   // Set reference voltage to AVCC
+	// Set ADC prescaler to 128 (16MHz / 128 = 125kHz)
+	ADCSRA |= (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+	//ADCSRA |= (1 << ADIE); // Enable interrupt;
+	ADCSRA |= (1 << ADEN);// | (1 << ADATE); // Enable ADC
+	// DIDR0 |= (1 << ADC2D) | (1 << ADC1D) | (1 << ADC0D); // Disable digital buffer for ADC2
+	DIDR0 |= (1 << ADC0D) | (1 << ADC3D) | (1 << ADC4D);
+
+	// Start the first ADC conversion
+	ADCSRA |= (1 << ADSC);
+}
+
+ 
 
 void setup() {
-   // Set the right_pwm and left_pwm pins as outputs
-   DDRD |= (1 << right_pwm); // Set PD6 (pin 6) as output for right motor
-   DDRD |= (1 << left_pwm);  // Set PD5 (pin 5) as output for left motor
+    // Initialize UART for debugging
 
-   // Configure Timer0 for Fast PWM mode
-   TCCR0A |= (1 << WGM00) | (1 << WGM01); // Set Fast PWM mode
-   TCCR0A |= (1 << COM0A1) | (1 << COM0B1); // Clear OC0A and OC0B on Compare Match, set at BOTTOM (non-inverting mode)
-   TCCR0B |= (1 << CS00); // No prescaling, start the timer
+    DDRD |= (1 << TXD);
+    DDRD &= ~(1 << RXD);
+
+      initUART();
+      adc_init();
+      init_IR_Sensors();
+      initMotor();
+      setupServo();
+      uart_puts("Hello, World!!\n");
+ 
+            // set_angle(90);
+
+ 
 }
 
-void analogWriteRight(uint8_t value) {
-   // Write the PWM value (0-255) to the right motor
-   OCR0A = value; // Set the compare register for the right motor
+ 
+//function to read digital values
+uint8_t digitalRead(uint8_t pin) {
+   // Read the digital value from the pin
+   return PIND & (1 << pin);
 }
 
-void analogWriteLeft(uint8_t value) {
-   // Write the PWM value (0-255) to the left motor
-   OCR0B = value; // Set the compare register for the left motor
+ 
+uint16_t analogRead(uint8_t pin) {
+   // Read the analog value from the pin
+   // Start the ADC conversion
+   ADCSRA |= (1 << ADSC);
+   // Wait for the conversion to complete
+   while (ADCSRA & (1 << ADSC));
+   // Return the ADC value
+   return ADC;
 }
+  
 
-void analogWrite(int pin, uint8_t value) {
-   if (pin == left_pwm) {
-      OCR0B = value;
-   } else {
-      OCR0A = value;
-   }
-}
+int initial_L = 0;
+int initial_R = 0;
 
-void digitalWrite(int pin, uint8_t value) {
-   // Write the digital value (0/1) to the motor
-   PORTD |= (value << pin); // Set PD2 (left control pin) HIGH
-}
-
+int clockwise = 1;
+int obstacleDistance = 100;
+ 
 int main(void) {
+ 
    setup(); // Initialize the setup
 
    // Receive data from PC
-	char data = 0;
-	
-	while(1)
-	{
-		// Receive data from PC
-		data = uart_receivec();
-		// Turn LED to Green on if received '1', turn to red if received '0'
-		if (data == 'F') {
-			car_front();
-		} else if (data == 'B') {
-			car_back();
-		} else if (data == 'L') {
-			car_left();
-		} else if (data == 'R') {
-			car_right();
-		} else if (data == 'S') {
-			car_Stop();
-		}
-	}
+  
+   read_IR_SensorValues();
+   L_Initial_Value = L_val;
+   R_Initial_Value = R_val;
+   Initial_Difference = R_Initial_Value - L_Initial_Value;
+   detectLane();
+   My_Lane = Lane;
+   obstacle_front = get_distance();
 
-   return 0; // Should never reach here
-}
+   set_angle(90);
 
-void car_front()//define the state of going front
-{
-  digitalWrite(left_ctrl,HIGH);
-  analogWrite(left_pwm,(255-speeds));
-  digitalWrite(right_ctrl,HIGH);
-  analogWrite(right_pwm,(255-speeds));
-}
+   car_Stop();
+   clockwise = getCurrentOrientation();
+ 
 
-void car_back()//define the status of going back
-{
-  digitalWrite(left_ctrl,LOW);
-  analogWrite(left_pwm,speeds);
-  digitalWrite(right_ctrl,LOW);
-  analogWrite(right_pwm,speeds);
-}
-void car_left()//set the status of left turning
-{
-  digitalWrite(left_ctrl, LOW);
-  analogWrite(left_pwm, speeds);  
-  digitalWrite(right_ctrl, HIGH);
-  analogWrite(right_pwm, (255-speeds));
-}
-void car_right()//set the status of right turning
-{
-  digitalWrite(left_ctrl, HIGH);
-  analogWrite(left_pwm, (255-speeds));
-  digitalWrite(right_ctrl, LOW);
-  analogWrite(right_pwm, speeds);
-}
-void car_Stop()//define the state of stop
-{
-  digitalWrite(left_ctrl,LOW);
-  analogWrite(left_pwm,0);
-  digitalWrite(right_ctrl,LOW);
-  analogWrite(right_pwm,0);
-}
+// Lane = RIGHT;
+initial_L = L_val;
+initial_R = R_val;
+
+while(1){
+
+ 
+
+
+ 
+
+    while (uart_available()) {
+        uint8_t c = uart_getc_blocking();
+        if (c == '\a' || c == '\n') {
+            stopCar();
+            _delay_ms(2000);
+
+        }
+        else  {
+
+        
+              speed_R =   40;
+              speed_L =   40;
+              move_globally();
+               
+
+        }
+    }
+
+ 
+              // speed_R =   40;
+              // speed_L =   40;
+              // move_globally();
+               
 
 
 
 
-// //*******************************************************************************
-// /*
-// keyestudio 4wd BT Car 
-// lesson 17
-// Bluetooth Multifunctional Car
-// http://www.keyestudio.com
-// */ 
-
-// #include <Arduino.h>
-// #include <avr/io.h>
-
-// #define SCL_Pin  A5  //Set the clock pin to A5
-// #define SDA_Pin  A4  //Set data pin to A4
-// //Array, used to store the data of pattern, can be calculated by yourself or obtained from the modulus tool
-// unsigned char start01[] = {0x01,0x02,0x04,0x08,0x10,0x20,0x40,0x80,0x80,0x40,0x20,0x10,0x08,0x04,0x02,0x01};
-// unsigned char front[] = {0x00,0x00,0x00,0x00,0x00,0x24,0x12,0x09,0x12,0x24,0x00,0x00,0x00,0x00,0x00,0x00};
-// unsigned char back[] = {0x00,0x00,0x00,0x00,0x00,0x24,0x48,0x90,0x48,0x24,0x00,0x00,0x00,0x00,0x00,0x00};
-// unsigned char left[] = {0x00,0x00,0x00,0x00,0x00,0x00,0x44,0x28,0x10,0x44,0x28,0x10,0x44,0x28,0x10,0x00};
-// unsigned char right[] = {0x00,0x10,0x28,0x44,0x10,0x28,0x44,0x10,0x28,0x44,0x00,0x00,0x00,0x00,0x00,0x00};
-// unsigned char STOP01[] = {0x2E,0x2A,0x3A,0x00,0x02,0x3E,0x02,0x00,0x3E,0x22,0x3E,0x00,0x3E,0x0A,0x0E,0x00};
-// unsigned char clear[] = {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
-// unsigned char speed_a[] = 
-// {0x00,0x40,0x20,0x10,0x08,0x04,0x02,0xff,0x02,0x04,0x08,0x10,0x20,0x40,0x00,0x00};
-// unsigned char speed_d[] = 
-// {0x00,0x02,0x04,0x08,0x10,0x20,0x40,0xff,0x40,0x20,0x10,0x08,0x04,0x02,0x00,0x00};
-
-// int left_ctrl = 2;//define the direction control pins of group B motor
-// int left_pwm = 5;//define the PWM control pins of group B motor
-// int right_ctrl = 4;//define the direction control pins of group A motor
-// int right_pwm = 6;//define the PWM control pins of group A motor
-// int speeds = 100; //Set the initial speed to 150
-
-// const int servopin = A3;//set the pin of servo to A3 
-// const int THRESHOLD = 200;
-
-// int L_pin = A1;//11; //define the left tracking sensor pin as D11
-// int M_pin = A0;//7; //define the middle tracking sensor pin as D7
-// int R_pin = A2;//8; //define the right tracking sensor pin as D8
-// int L_val, M_val, R_val;
-
-// int trigPin = 12; //TRIG Pin be connected to D12
-// int echoPin = 13; //ECHO Pin be connected to D13
-// int distance, distance_l, distance_r;
-
-// char BLE_val;
-
-// void setup() {
-//   Serial.begin(9600);//Set baud rate to 9600
-//   pinMode(left_ctrl,OUTPUT);//set direction control pins of group B motor to OUTPUT
-//   pinMode(left_pwm,OUTPUT);//set PWM control pins of group B motor to OUTPUT
-//   pinMode(right_ctrl,OUTPUT);//set direction control pins of group A motor to OUTPUT
-//   pinMode(right_pwm,OUTPUT);//set PWM control pins of group A motor to OUTPUT
-//   servopulse(servopin,90);//the angle of servo is 90 degree
-//   delay(300);
-//   pinMode(L_pin, INPUT); //Tracking sensor pins are configured for input mode
-//   pinMode(M_pin, INPUT);
-//   pinMode(R_pin, INPUT);
-//   pinMode(trigPin, OUTPUT); //define TRIG as the output mode
-//   pinMode(echoPin, INPUT); //define ECHO as the input mode
-//   pinMode(SCL_Pin,OUTPUT);// Set the clock pin to output
-//   pinMode(SDA_Pin,OUTPUT);//Set the data pin to output
-//   matrix_display(clear);
-//   matrix_display(start01); //display start01 expression pattern
-// }
-
-// void loop() {
-//    if(Serial.available()>0) {
-//     BLE_val = Serial.read();
-//     Serial.println(BLE_val);
-//   } 
-//     switch(BLE_val)
-//     {
-//       case 'F' : car_front(); 
-//       matrix_display(clear);
-//       matrix_display(front);   
-//       break;
-      
-//       case 'B' : car_back(); 
-//       matrix_display(clear);
-//       matrix_display(back); 
-//       break;
-
-//       case 'L' : car_left(); 
-//       matrix_display(clear);
-//       matrix_display(left); 
-//       break;
      
-//       case 'R' : car_right();
-//       matrix_display(clear);
-//       matrix_display(right);  
-//       break;
+
+    read_IR_SensorValues();   
+
+
+    // keepOnTrack();
+ 
+    // uart_puts("Distance: ");
+    // printNumber("Distance: ", Obstacle_Distance);
+ 
+    // detectLane();
+
+    // printGradient();  
+
+    // simpleGradientAlgorithm();
+ 
+ 
+    if(get_distance() > 30){    
+        simpleGradientAlgorithm2();
+    }else{
+        stopCar();
+    }
+
+// print the distance to the obstacle
+ printNumberSameLine("Distance : ", get_distance());
+
+
+    // fastGradientAlgorithm();
+
+    // simpleObstacleAvoidance();
+ 
+
+    // scanForObstacle( 45);
+    // printNumberSameLine("Obstacle Left: ",  obstacle_left);
+    // printNumberSameLine(" Obstacle Front: ", obstacle_front);
+    // printNumberSameLine(" Obstacle Right: ", obstacle_right);
+    // uart_puts("\n");
+ 
+
+}
+ 
+	 
+   return 0;  
+}
+
+
+int speed = 85;
+
+
+void simpleObstacleAvoidance(){
+
+     if(obstacle_front < 35 && obstacle_front > 2) {
+        // Brake = 1;
+
+        move(0,0);
+        stopCar();
+        overtaking = 1;
+
+    }
+    else{
+      if(obstacle_front > 40){
+           overtaking = 0;
+      }
+      else 
+       if(Lane == LEFT && obstacle_right < 40){
+
+            overtaking = 1;
+            move(speed,0);
+
+        }
+        else if(Lane == RIGHT && obstacle_left < 40){
+
+          overtaking = 1;
+          move(0,speed);
+
+        }
+
+    }
+ 
+}
+
+
+
+void MotorSpeed(int leftSpeed, int rightSpeed) {
+   PORTD |= (1 << left_ctrl);   
+   PORTD |= (1 << right_ctrl);   
+   LEFT_MOTOR_OCnx  = 155;
+   RIGHT_MOTOR_OCnx = 155;
+}
+
+
+int getCurrentOrientation (){
+
+    if(L_val > R_val){
+       return 1; //Clockwise
+    }else{
+        return 0; //AntiClockwise
+    }
+
+}
+ 
+
+
+void move(int leftSpeed, int rightSpeed) {
+
+    if (leftSpeed >= 0) {
+        PORTD |= (1 << left_ctrl);  // Set left motor to forward
+    } else {
+        PORTD &= ~(1 << left_ctrl); // Set left motor to reverse
+    }
+
+    if (rightSpeed >= 0) {
+        PORTD |= (1 << right_ctrl);  // Set right motor to forward
+    } else {
+        PORTD &= ~(1 << right_ctrl); // Set right motor to reverse
+    }
+
+   
+    OCR0A =    255 -   abs(leftSpeed);  // Adjusted Left motor PWM
+    OCR0B =    255 -   abs(rightSpeed); // Adjusted Right motor PWM
+
+ 
+
+}
+
+void move_globally(){
+
+
+  if(!overtaking){
+
+    if (speed_L >= 0) {
+        PORTD |= (1 << left_ctrl);  // Set left motor to forward
+    } else {
+        PORTD &= ~(1 << left_ctrl); // Set left motor to reverse
+    }
+
+    if (speed_R >= 0) {
+        PORTD |= (1 << right_ctrl);  // Set right motor to forward
+    } else {
+        PORTD &= ~(1 << right_ctrl); // Set right motor to reverse
+    }
+
+   
+    OCR0A =    255 -   abs(speed_L);  // Adjusted Left motor PWM
+    OCR0B =    255 -   abs(speed_R); // Adjusted Right motor PWM
+
+  }
+
+ 
+}
+
+ int loopCount = 0;
+
+
+void simpleGradientAlgorithm2(){
+
+        stopAfterLoops(2);  
+         
+        if(clockwise){
+
+            if(L_val <= (initial_L - 22)) { 
+
+            if(speed_L > 0){
+              speed_L =  speed_L- 1;
+            }else{
+              speed_L = 0;
+            }
+              speed_R =   speed; 
+            }  else
+             if (R_val >= (initial_R + 22))
+            {
+              if(speed_R > 0){
+
+              speed_R =   speed_R - 1;
+
+              }else{
+                  speed_R = 0;
+                }
+              speed_L =  speed;
+
+            }else{
+              speed_R =   speed;
+              speed_L =   speed;
+            }
+
+
+        }else{
+          //for anti clockwise
+            if(R_val <= (initial_R - 6)) {
+        if(speed_R > 0){
+          speed_R =   speed_R - 6;
+        }else{
+          speed_R = 0;
+        }
+           speed_L =   speed;
+       
+        }  else if (L_val >= (initial_L + 6))
+        {
+          if(speed_L > 0){
+
+          speed_L =   speed_L - 6;
+
+          }else{
+              speed_L = 0;
+            }
+          speed_R =  speed;
+           
+
+        }else{
+          speed_R =   speed;
+          speed_L =   speed;
+         }
+        }
+
+        
+
+
+           move_globally();
+
+}
+int overBlack = 0;
+
+int L_overBlack = 0;
+int R_overBlack = 0;
+
+int L_overWhite = 0;
+int R_overWhite = 0;
+
+void stopAfterLoops( int n){
+
+     if(loopCount >= n){
+          stopCar();
+          while(1);
+        }
+
      
-//       case 'S' : car_Stop();
-//       matrix_display(clear);
-//       matrix_display(STOP01); 
-//       break;
+ 
+    if(L_val > 900){
+      L_overBlack = 1;
+    }
 
-//       case 'a' : speeds_a();
-//       matrix_display(clear);
-//       matrix_display(speed_a);  
-//       break;
+    if(R_val > 900){
+      R_overBlack = 1;
+    }
+ 
+ 
+     if(L_overBlack == 1 && R_overBlack == 1){
+
+
+
+        if(L_val < 700){
+            L_overWhite = 1;
+          }
+
+          if(R_val < 700){
+            R_overWhite = 1;
+          }
+
+          if(L_overWhite == 1 && R_overWhite == 1){
+ 
+             _delay_ms(800);
+ 
+            loopCount = loopCount + 1;
+            L_overBlack = 0;
+            R_overBlack = 0;
+            L_overWhite = 0;
+            R_overWhite = 0;
+
+          }
+
+     }
+ 
+  
+
+}
+
+ 
+int turningAround = 0;
+
+void simpleGradientAlgorithm() {
+
+ if(turningAround){
+
+    if(L_val < (R_val + 80)){
+      turningAround = 0;
+    }
+
+        if(L_val <= Middle_Val) {
+          speed_R =   speed - (L_val/2.5);
+          speed_L =   speed;
+
+        }else{
+          speed_R =   speed;
+          speed_L =   speed - (200);
+        }
+ }
+ else{
+
+ if(L_val <= GradientOutsideTrack && R_val <= GradientOutsideTrack) {
+  // Reverse
+          speed_L =  -180;
+          speed_R =  -180;
+   }else
+      if(L_val > R_val) {
+
+        // Turn complete around
+        turningAround = 1;
+
+      }else{
+ 
+       if(L_val < (600) && L_val > (530)) {
+            speed_R =  45;
+        }
+        else
+        if(L_val < (530)){
+            speed_R =   0;
+        }else{
+            speed_R =  speed;
+        }
+
+        if(R_val > (GradientRightEnd - 30) && R_val < (GradientRightEnd)) {
+            speed_L =  45;
+        }
+        else
+        if(R_val > (GradientRightEnd)) {
+            speed_L =  0;
+        }else{
+            speed_L =  speed;
+        }
+  
+      }
+
+ }
+ 
+   move_globally();
+
+ 
+}
+
+
+  
+ 
+ 
+
+
+void stopCar() {
+     move(0,0);
+}
+
+int switchingLane = 0;  //0 - No, 1 - Yes
+
+void KeepCarOnMyLane(){
+
+  //If my lane is not same as the lane, turn to the lane
+  if(My_Lane != Lane) {
+
+    switchingLane = 1;
+   switchLanes(My_Lane);
+
+  }else{
+    //Keep the car on the lane
+
+    //Keep the car on the My Lane (Between Middle and Right/Left edge)
+
+if(Lane == LEFT) {
+
+    if(L_val < GradientRightEnd) {
+      speed_R = 0;
+    } else   {
+      speed_R = 100;
+    }  
+
+    if(R_val > GradientMiddle) {
+      speed_L = 0;
+    } else   {
+      speed_L = 100;
+    } 
+  
+}else{
+
+    if(L_val < GradientMiddle) {
+      speed_R = 0;
+    } else   {
+      speed_R = 100;
+    }  
+
+    if(R_val > GradientRightEnd) {
+      speed_L = 0;
+    } else   {
+      speed_L = 100;
+    }  
+
+  }
+ 
+ }
+
+}
+
+
+
+ 
+
+void printGradient(){
+
+      char buffer[10];
+      itoa(L_val, buffer, 10);
+      uart_puts("L: ");
+      uart_puts(buffer);
+      //right sensor
+
+      //print in red colour
+
+
+    //print in red colour
+       
+      itoa(R_val, buffer, 10);
+      uart_puts(" R: ");
+      uart_puts(buffer);
+      uart_puts("Initial R: ");
+      itoa(R_Initial_Value, buffer, 10);
+      uart_puts(buffer);
+      uart_puts("Initial L: ");
+      itoa(L_Initial_Value, buffer, 10);
+      uart_puts(buffer);
+ 
+      uart_puts("\n");
+
+
+
+
+}
+
+
+int ObstacleExist(int distance_limit) {
+            if(get_distance() < distance_limit) {
+            return 1;
+            }
+            else {
+            return 0;
+            }
+}
+
+
+
+void scanForObstacle( int distance_limit) {
+
+  
+      if (servoUpdateFlag == 1) {
+
+        if(ServoDirection == 'R') {
+          obstacle_left = get_distance();
+          obstacle_right = 0;
+
+        } else {
+          obstacle_right = get_distance();
+          obstacle_left = 0;
+        }
+            set_angle(90);   
+            servoUpdateFlag = 0;
+        } else if (servoUpdateFlag == 2) {
+            obstacle_front = get_distance();
+            set_angle((Lane == 'R') ? 180 : 0);
+            servoUpdateFlag = 0;
+        }
+
+}
+
+ 
+ 
+void tracking1() {
+  int track_flag = 1;
+  while (track_flag) {
+ 
+    if (M_val > THRESHOLD) { //Black line detected in the middle
+      if (L_val > THRESHOLD && R_val <= THRESHOLD) { //If a black line is detected on the left, but not on the right, turn left
+        car_left();
+      }
+      else if (L_val <= THRESHOLD && R_val > THRESHOLD) { //Otherwise, if a black line is detected on the right and not on the left, turn right
+        car_right();
+      }
+      else { //Otherwise, the car goes forward
+        car_front();
+      }
+    }
+    else { //no black lines detected in the middle
+      if (L_val > THRESHOLD && R_val <= THRESHOLD) { //If a black line is detected on the left, but not on the right, turn left
+        car_right();
+      }
+      else if (L_val <= THRESHOLD && R_val > THRESHOLD) { //Otherwise, if a black line is detected on the right and not on the left, turn right
+        car_right();;
+      }
+      else { //Otherwise, stop
+            // uart_puts(readPin(L_pin));
+
+        car_Stop();
+      }
+    }
+   //  BLE_val = Serial.read();
+   //  if (BLE_val == 'S') { //When S is received, the car stops
+   //    track_flag = 0;
+   //    car_Stop();
+   //  }
+  }
+
+ 
+}
+ 
+
+
+
+
+ //function to print a number with a string
+void printNumber(char *str, int num) {
+   char buffer[10];
+   itoa(num, buffer, 10);
+   uart_puts(str);
+   uart_puts(buffer);
+   uart_puts("\n");
+}
+
+void printNumberSameLine(char *str, int num) {
+   char buffer[10];
+   itoa(num, buffer, 10);
+   uart_puts(str);
+   uart_puts(buffer);
+}
+
+
+
+
+
+void detectLane() {
+        // servopulse(0);
+      Middle_Val = (L_val + R_val) / 2;
+
+      if(Middle_Val > GradientMiddle){
+        Lane = RIGHT;
+      }else{
+        Lane = LEFT;
+      }
+}
+ 
+
+
+// TO DO
+
+
+void switchLanes(char NewLane) {
+  if(NewLane == RIGHT ) {
      
-//       case 'd' : speeds_d();
-//       matrix_display(clear);
-//       matrix_display(speed_d); 
-//       break;
+    //drive to right 60 degrees, go forward till the L_val is greater than middle
 
-//       case  'U':  follow();  //Receiving ‘U’,enter follow mode
-//       break; 
-//       case  'Y':  avoid(); //Receiving ‘Y’,enter obstacle avoidance mode  
-//       break;  
-//       case  'G':  confinement(); //Receiving ‘G’,enter confinement mode
-//       break;  
-//       case  'X':  tracking(); //Receiving ‘X’,enter tracking mode
-//       break;  
-//     }
-// }
 
-// // Change back to correct names after switchin motor cables
-// void car_back()//define the state of going front
-// {
-//   digitalWrite(left_ctrl,HIGH);
-//   analogWrite(left_pwm,(255-speeds));
-//   digitalWrite(right_ctrl,HIGH);
-//   analogWrite(right_pwm,(255-speeds));
-// }
-// void car_front()//define the status of going back
-// {
-//   digitalWrite(left_ctrl,LOW);
-//   analogWrite(left_pwm,speeds);
-//   digitalWrite(right_ctrl,LOW);
-//   analogWrite(right_pwm,speeds);
-// }
-// void car_right()//set the status of left turning
-// {
-//   digitalWrite(left_ctrl, LOW);
-//   analogWrite(left_pwm, speeds);  
-//   digitalWrite(right_ctrl, HIGH);
-//   analogWrite(right_pwm, (255-speeds));
-// }
-// void car_left()//set the status of right turning
-// {
-//   digitalWrite(left_ctrl, HIGH);
-//   analogWrite(left_pwm, (255-speeds));
-//   digitalWrite(right_ctrl, LOW);
-//   analogWrite(right_pwm, speeds);
-// }
-// void car_Stop()//define the state of stop
-// {
-//   digitalWrite(left_ctrl,LOW);
-//   analogWrite(left_pwm,0);
-//   digitalWrite(right_ctrl,LOW);
-//   analogWrite(right_pwm,0);
-// }
 
-// void speeds_a() { //rapidly growing function
-//   while (1) {
-//     Serial.println(speeds);  //display speed information 
-//     if (speeds < 255) { //Up to 255
-//       matrix_display(clear);
-//       matrix_display(speed_a);
-//       speeds++;
-//       delay(10);  //adjust the speed of growth 
-//     }
-//     BLE_val = Serial.read();
-//     if (BLE_val == 'S') //Receive 'S',the car stops accelerating
-//     break;
-//   }
-// }
-// void speeds_d() { //velocity reduction function
-//   while (1) {
-//     Serial.println(speeds);  //display speed information
-//     if (speeds > 0) { //down to 0
-//       matrix_display(clear);
-//       matrix_display(speed_d);
-//       speeds--;
-//       delay(10);    //adjust the speed of deceleration
-//     }
-//     BLE_val = Serial.read();
-//     if (BLE_val == 'S') //Receive 'S',the car stops deceleration
-//     break;
-// }
-// }
+   switchingLane = 0;
 
-// int get_distance() {
-//   int distance = 0;
-//   digitalWrite(trigPin, LOW);     // send pulse through Trig/Pin, trigger HC-SR04 ranging, so that send out ultrasonic signal interface low level 2μs
-//   delayMicroseconds(2);
-//   digitalWrite(trigPin, HIGH);    // make ultrasonic signal interface high level 10μs, here is at least 10μs
-//   delayMicroseconds(10);
-//   digitalWrite(trigPin, LOW);     // keep the ultrasonic signal interface low level
-//   distance = pulseIn(echoPin, HIGH) / 58; // read the pulse time and convert the pulse time to the distance (unit: cm)
-//   Serial.println(distance);        //output distance value
-//   return distance;
-// }
+  }else{
+     //drive to left 60 degrees, go forward till the R_val is lesser than middle
+ 
 
-// void follow() {
-//   servopulse(servopin,90);
-//   delay(200);
-//   int follow_flag = 1;
-//   while (follow_flag) {
-//     distance = get_distance(); //call the ranging function
-//     if (distance < 8 ) {//If the distance is less than 8
-//       car_back();//the car goes back
-//       matrix_display(clear);
-//       matrix_display(back); 
-//     }
-//     else if (distance >= 8 && distance < 13) { //If the distance is greater than or equal to 8, it's less than 13
-//       car_Stop();//stop
-//       matrix_display(clear);
-//       matrix_display(STOP01); 
-//     }
-//     else if (distance >= 13 && distance <= 35 ) { //If the distance is greater than or equal to 13, it's less than 35
-//       car_front();//the car goes forward
-//       matrix_display(clear);
-//       matrix_display(front);
-//     }
-//     else {//If none of the above
-//       car_Stop();//stop
-//       matrix_display(clear);
-//       matrix_display(STOP01); 
-//     }
-//     BLE_val = Serial.read();
-//     if (BLE_val == 'S') { //When S is received, the car stops
-//       follow_flag = 0;
-//       car_Stop();
-//     }
-//   }
-// }
 
-// void avoid() {
-//   int avoid_flag = 1;
-//   while (avoid_flag) {
-//     distance = get_distance(); //Call the ranging function
-//     if (distance > 0 && distance < 40) { //If the distance is less than 20 and greater than 0
-//       car_Stop();//stops
-//       matrix_display(clear);
-//       matrix_display(STOP01);   //the dot matrix displays a stop pattern
-//       delay(1000);
-//       servopulse(servopin,160); //bring the steering gear over 180 degrees
-//       delay(500);
-//       distance_l = get_distance(); //gets the left distance 
-//       delay(100);
-//       servopulse(servopin,20); //turn the steering gear to 0 degrees
-//       delay(500);
-//       distance_r = get_distance(); //get the right distance
-//       delay(100);
-//       if (distance_l > distance_r) { //compare the distance, if the left is bigger than the right
-//         car_left();  //the car turns left
-//         matrix_display(clear);
-//         matrix_display(left);   //the dot matrix shows a left pattern
-//         servopulse(servopin,90);//the steering gear returns to 90 degrees
-//         delay(700);
-//         matrix_display(clear);
-//         matrix_display(front);   //the dot matrix displays a forward pattern
-//       } 
-//       else { //Otherwise if the right is bigger than the left
-//         car_right();//the car turns right
-//         matrix_display(clear);
-//         matrix_display(right);   //the dot matrix shows a left pattern
-//         servopulse(servopin,90);//the steering gear returns to 90 degrees
-//         delay(700);
-//         matrix_display(clear);
-//         matrix_display(front);   //the dot matrix displays a forward pattern
-//       }
-//     }
-//     else { //When the front distance is less than or equal to 10cm
-//       car_front();//the car goes forward
-//       matrix_display(clear);
-//       matrix_display(front);   //the dot matrix displays a forward pattern
+    switchingLane = 0;
 
-//     }
-//     BLE_val = Serial.read();
-//     if (BLE_val == 'S') {//When S is received, the car stops
-//       avoid_flag = 0;
-//       car_Stop();
-//     }
-//   }
-// }
+  }
 
-// void confinement() {
-//   int confinement_flag = 1;
-//   while (confinement_flag) {
-//     L_val = digitalRead(L_pin); //read the value of the left sensor
-//     M_val = digitalRead(M_pin); //read the value of the middle sensor
-//     R_val = digitalRead(R_pin); //read the value of the right sensor
-//     if ( L_val == 0 && M_val == 0 && R_val == 0 ) { //the car goes forward when no black line is detected
-//       car_front();
-//     }
-//     else { //Otherwise, if any of the tracking sensors detect a black line, the goes back and then turns left
-//       car_back();
-//       delay(500);
-//       car_left();
-//       delay(800);
-//     }
-//     BLE_val = Serial.read();
-//     if (BLE_val == 'S') { //When S is received, the car stops
-//       confinement_flag = 0;
-//       car_Stop();
-//     }
-//   }
-// }
+      //Check if its outside of track raise a flag
+      // checkIfCarIsInTrack();
 
-// void tracking() {
-//   int track_flag = 1;
-//   while (track_flag) {
-//     L_val = analogRead(L_pin); //read the value of the left sensor
-//     M_val = analogRead(M_pin); //read the value of the middle sensor
-//     R_val = analogRead(R_pin); //read the value of the right sensor
-//     if (M_val > THRESHOLD) { //Black line detected in the middle
-//       if (L_val > THRESHOLD && R_val <= THRESHOLD) { //If a black line is detected on the left, but not on the right, turn left
-//         car_left();
-//       }
-//       else if (L_val <= THRESHOLD && R_val > THRESHOLD) { //Otherwise, if a black line is detected on the right and not on the left, turn right
-//         car_right();
-//       }
-//       else { //Otherwise, the car goes forward
-//         car_front();
-//       }
-//     }
-//     else { //no black lines detected in the middle
-//       if (L_val > THRESHOLD && R_val <= THRESHOLD) { //If a black line is detected on the left, but not on the right, turn left
-//         car_right();
-//       }
-//       else if (L_val <= THRESHOLD && R_val > THRESHOLD) { //Otherwise, if a black line is detected on the right and not on the left, turn right
-//         car_right();;
-//       }
-//       else { //Otherwise, stop
-//         car_Stop();
-//       }
-//     }
-//     BLE_val = Serial.read();
-//     if (BLE_val == 'S') { //When S is received, the car stops
-//       track_flag = 0;
-//       car_Stop();
-//     }
-//   }
-// }
 
-// void servopulse(int servopin,int myangle)//Steering gear running angle
-// {
-//   for(int i=0; i<30; i++)
-//   {
-//     int pulsewidth = (myangle*11)+500;
-//     digitalWrite(servopin,HIGH);
-//     delayMicroseconds(pulsewidth);
-//     digitalWrite(servopin,LOW);
-//     delay(20-pulsewidth/1000);
-//   }  
-// }
+}
 
-// //this function is used for dot matrix display
-// void matrix_display(unsigned char matrix_value[])
-// {
-//   IIC_start();  //the function that calls the data transfer start condition
-//   IIC_send(0xc0);  //select address
 
-//   for (int i = 0; i < 16; i++) //the pattern data is 16 bytes
-//   {
-//     IIC_send(matrix_value[i]); //Transmit the data of the pattern
-//   }
-//   IIC_end();   //End pattern data transmission
-//   IIC_start();
-//   IIC_send(0x8A);  //Display control, select 4/16 pulse width
-//   IIC_end();
-// }
-// //Conditions under which data transmission begins
-// void IIC_start()
-// {
-//   digitalWrite(SDA_Pin, HIGH);
-//   digitalWrite(SCL_Pin, HIGH);
-//   delayMicroseconds(3);
-//   digitalWrite(SDA_Pin, LOW);
-//   delayMicroseconds(3);
-//   digitalWrite(SCL_Pin, LOW);
-// }
-// //Indicates the end of data transmission
-// void IIC_end()
-// {
-//   digitalWrite(SCL_Pin, LOW);
-//   digitalWrite(SDA_Pin, LOW);
-//   delayMicroseconds(3);
-//   digitalWrite(SCL_Pin, HIGH);
-//   delayMicroseconds(3);
-//   digitalWrite(SDA_Pin, HIGH);
-//   delayMicroseconds(3);
-// }
-// //transmit data
-// void IIC_send(unsigned char send_data)
-// {
-//   for (byte mask = 0x01; mask != 0; mask <<= 1) //Each byte has 8 bits and is checked bit by bit starting at the lowest level
-//   {
-//     if (send_data & mask) { //Sets the high and low levels of SDA_Pin depending on whether each bit of the byte is a 1 or a 0
-//       digitalWrite(SDA_Pin, HIGH);
-//     } else {
-//       digitalWrite(SDA_Pin, LOW);
-//     }
-//     delayMicroseconds(3);
-//     digitalWrite(SCL_Pin, HIGH); //Pull the clock pin SCL_Pin high to stop data transmission
-//     delayMicroseconds(3);
-//     digitalWrite(SCL_Pin, LOW); //pull the clock pin SCL_Pin low to change the SIGNAL of SDA 
-//   }
-// }
-// //*******************************************************************************
+
+
+void checkIfCarIsInTrack() {
+  if(L_val > GradientOutsideTrack && R_val > GradientOutsideTrack) {
+    carIsInTrack = 1;
+  }else{
+    carIsInTrack = 0;
+  }
+}
+
