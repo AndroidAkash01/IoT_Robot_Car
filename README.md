@@ -16,13 +16,13 @@ It also uses Ultrasonic sensor to measure distance and if the distance of object
 
 
  <p align="center">
-  <img src="Ultrasonic_1.gif" width="650">
+  <img src="Ultrasonic_1.gif" width="540">
 </p>
 
 ## Using Ultrasonic Sensor to Find the Direction of the nearest Object
 
  <p align="center">
-  <img src="Ultrasonic_2.gif" width="650">
+  <img src="Ultrasonic_2.gif" width="540">
 </p>
 
 
