@@ -18,12 +18,12 @@ It also uses Ultrasonic sensor to measure distance and if the distance of object
  <p align="center">
   <img src="Ultrasonic_1.gif" width="650">
 </p>
-# Using UltraSonic Sensor to find direction of closest object.
+## Using UltraSonic Sensor to find direction of closest object.
 
  <p align="center">
   <img src="Ultrasonic_2.gif" width="650">
 </p>
-# Using UltraSonic Sensor to find direction of closest object.
+## Using UltraSonic Sensor to find direction of closest object.
 
 
 
