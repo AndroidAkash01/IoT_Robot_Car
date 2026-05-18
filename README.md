@@ -4,7 +4,7 @@
 </p>
  
  
-## A small Arduino-based robot car project built to explore basic robotics, motor control, sensors, and embedded programming.
+## An Arduino-based robot car project built to explore basic robotics, motor control, sensors, and embedded programming.
 
 ## Overview
 
