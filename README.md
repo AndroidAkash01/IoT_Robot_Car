@@ -2,9 +2,9 @@
  <p align="center">
   <img src="RobotMovingAround_part_4.gif" width="650">
 </p>
----
  
-A small Arduino-based robot car project built to explore basic robotics, motor control, sensors, and embedded programming.
+ 
+# A small Arduino-based robot car project built to explore basic robotics, motor control, sensors, and embedded programming.
 
 ## Overview
 
