@@ -13,6 +13,8 @@ This project uses an Arduino to control a simple robotic car. The goal is to und
 This robot car is designed to run on a gradient track with curves which the IR sensors read and control the direction and speed of the mortors to change its direction. 
 It also uses Ultrasonic sensor to measure distance and if the distance of object is too close, it would stop or change directions.
 
+Then the ultrasonic sensor (eyes) was used to find the widest gap if there is an obstabcle in front, and then turn the robot in that direction and move forward. 
+
 
 
 
@@ -29,7 +31,6 @@ It also uses Ultrasonic sensor to measure distance and if the distance of object
 
 ## Using Ultrasonic Sensor to Find the Direction of the nearest Object
 
-Then the ultrasonic sensor (eyes) was used to find the widest gap if there is an obstabcle in front, and then turn the robot in that direction and move foreward. 
 
 
 
