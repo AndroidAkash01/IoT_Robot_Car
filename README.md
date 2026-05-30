@@ -4,7 +4,7 @@
 </p>
  
  
-## An Arduino-based robot car project built to explore basic robotics, motor control, sensors, and embedded programming. When facing an obstacle the Ultrasonic sensors (eyes) finds the widest gap direction and turns towards that direction and move.
+## An Arduino-based robot car project built to explore robotics, motor control, sensors, and embedded programming. When facing an obstacle the Ultrasonic sensors (eyes) finds the widest gap direction and turns towards that direction and move.
 
 ## Overview
 
