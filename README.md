@@ -41,6 +41,8 @@ The project is mainly created as a learning project for:
 - robotics
 - motor control
 - sensor-based movement
+- Analog to digital for IR sensors
+- Analog values for motor power and direction contrrol
 
 ## Features
 
